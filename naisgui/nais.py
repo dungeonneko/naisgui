@@ -91,7 +91,11 @@ class Nais():
     def save_image(self, name, args):
         base = os.path.join(self.output_folder(), name)
         if type(args) is str:
-            args = json.loads(args)
+            try:
+                args = json.loads(args)
+            except Exception as e:
+                print(e)
+                return
         with open(f'{base}.json', 'wt') as f:
             json.dump(args, f, indent=2)
         im_bin = self.gen_image(args)
