@@ -1,0 +1,5 @@
+argon2-cffi==20.1.0
+Pillow
+PySide2
+requests
+wordcloud
