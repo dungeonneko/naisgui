@@ -1,9 +1,6 @@
 import datetime
-import json
-import uuid
-import requests
 import sys
-from naisgui.nais import Nais
+from naisgui.nais import *
 from naisgui.util import *
 from PySide2.QtCore import *
 from PySide2.QtGui import *
@@ -12,6 +9,68 @@ from PySide2.QtWidgets import *
 
 g_nais = Nais()
 g_job = NaisJob()
+
+
+class GuiData(QWidget):
+    textChanged = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self._text = NaisCodeEditor()
+        self._text.textChanged.connect(self.textChanged.emit)
+        self._text.setAcceptDrops(False)
+        self._mask = QCheckBox('Never change n_sample, steps, width, height by Image Drop')
+        self._mask.setChecked(True)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0,0,0,0)
+        layout.setMargin(0)
+        layout.addWidget(self._mask)
+        layout.addWidget(self._text)
+        self.setLayout(layout)
+        self.setAcceptDrops(True)
+        self.setToolTip('Instead of manual input, You can also drop an image with meta info from local or web browser')
+
+    def toPlainText(self):
+        return self._text.toPlainText()
+
+    def setPlainText(self, s):
+        self._text.setPlainText(s)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        url = event.mimeData().urls()[0]
+        if url.isLocalFile():
+            src, ret = nais_data_from_local_image(url.toLocalFile())
+        else:
+            src, ret = nais_data_from_uploaded_image(url.toString())
+
+        data = {}
+        try:
+            data = json.loads(self.toPlainText())
+        except Exception as e:
+            pass
+
+        if 'input' in src:
+            data['input'] = src['input']
+        if 'parameters' in src:
+            for k, v in src['parameters'].items():
+                if self._mask.isChecked() and k in ['n_samples', 'steps', 'width', 'height']:
+                    continue
+                data['parameters'][k] = v
+
+        self.setPlainText(json_to_text(data))
 
 
 class GuiPrompt(QWidget):
@@ -34,7 +93,7 @@ data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Input')
-        self._text = NaisCodeEditor()
+        self._text = GuiData()
         self._text.setPlainText('''\
 {
   "input": "Hatsune Miku",
@@ -114,13 +173,13 @@ data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
         self._preview.setPlainText(self.gen(self._repeat.value(), 0))
 
     def gen(self, N, I):
-        data = json.loads(self._text.toPlainText())
         try:
+            data = json.loads(self._text.toPlainText())
             exec(self._tweak.toPlainText())
         except Exception as e:
             return str(e)
         try:
-            text = json.dumps(data, sort_keys=True, indent=2)
+            text = naisgui.util.json_to_text(data)
         except Exception as e:
             return str(e)
         return text
@@ -139,6 +198,7 @@ class GuiImageList(QListWidget):
 
     def __init__(self):
         super().__init__()
+        self.setAcceptDrops(False)
         self.setWindowTitle('Image List')
         self.setContentsMargins(0,0,0,0)
         self.setSpacing(0)
@@ -187,12 +247,22 @@ class GuiImageList(QListWidget):
                 os.remove(base + '_wc_neg.png')
             self.takeItem(self.row(i))
 
+    def startDrag(self, supportedActions:Qt.DropActions) -> None:
+        item = self.currentItem()
+        path = QUrl.fromLocalFile(os.path.join(g_nais.output_folder(), item.data(Qt.UserRole + 0) + '.png'))
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setUrls([path])
+        drag.setMimeData(mime)
+        drag.exec_()
+
 
 class GuiImageViewer(NaisImage):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Image Viewer')
         self.setMinimumSize(QSize(256, 256))
+        self.smoothTransformation = True
 
     def setImage(self, name):
         super().setImage(os.path.join(g_nais.output_folder(), name + '.png'))

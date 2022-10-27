@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import time
@@ -9,6 +10,10 @@ from PySide2.QtWidgets import *
 def read_text(path: str):
     with open(path, 'rt') as f:
         return f.read()
+
+
+def json_to_text(obj):
+    return json.dumps(obj, sort_keys=True, indent=2)
 
 
 class NaisJob(QThread):
@@ -124,12 +129,19 @@ class NaisImage(QLabel):
         self.setMinimumSize(QSize(8, 8))
         self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding)
         self.setScaledContents(False)
+        self.smoothTransformation = False
 
     def setImage(self, path):
         self._pm = QPixmap(path)
-        self.setPixmap(self._pm.scaled(self.size(), Qt.KeepAspectRatio))
+        self.setPixmap(self._pm.scaled(
+            self.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation if self.smoothTransformation else Qt.FastTransformation))
 
     def resizeEvent(self, eve):
         super().resizeEvent(eve)
         if self._pm is not None:
-            self.setPixmap(self._pm.scaled(self.size(), Qt.KeepAspectRatio))
+            self.setPixmap(self._pm.scaled(
+                self.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation if self.smoothTransformation else Qt.FastTransformation))

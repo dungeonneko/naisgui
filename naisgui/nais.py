@@ -3,6 +3,7 @@ import io
 import json
 import os
 import requests
+import naisgui.util
 from argon2 import low_level
 from base64 import urlsafe_b64encode
 from hashlib import blake2b
@@ -10,6 +11,74 @@ from http.cookies import SimpleCookie
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from wordcloud import WordCloud
+
+
+NAIS_DATA_COMPLETE = 0
+NAIS_DATA_INCOMPLETE = 1
+NAIS_DATA_ERROR = -1
+
+
+def nais_data_from_image(arg):
+    try:
+        im = Image.open(arg)
+        im.load()
+        print(im.info)
+    except Exception as e:
+        return {}, NAIS_DATA_ERROR
+    try:
+        # NovelAI
+        return {
+                   'input': im.info['Description'],
+                   'model': 'nai-diffusion',
+                   'parameters': json.loads(im.info['Comment'])
+               }, NAIS_DATA_COMPLETE
+    except Exception as e:
+        pass
+    try:
+        data = {
+            'input': '',
+            'parameters': {},
+        }
+        # AIBooru?
+        for x in im.info['parameters'].split('\n'):
+            if ':' in x:
+                if x.startswith('Negative prompt:'):
+                    data['parameters']['uc'] = x[len('Negative prompt:'):]
+                else:
+                    for y in x.split(','):
+                        y = y.strip()
+                        if y.startswith('Steps:'):
+                            data['parameters']['steps'] = int(y[len('Steps:'):].strip())
+                        elif y.startswith('CFG scale:'):
+                            data['parameters']['scale'] = int(y[len('CFG scale:'):].strip())
+                        elif y.startswith('Seed:'):
+                            data['parameters']['seed'] = int(y[len('Seed:'):].strip())
+                        elif y.startswith('Size:'):
+                            y = y[len('Size:'):].strip()
+                            w, h = y.split('x')
+                            data['parameters']['width'] = int(w.strip())
+                            data['parameters']['height'] = int(h.strip())
+                        elif y.startswith('Denoising strength:'):
+                            data['parameters']['strength'] = float(y[len('Denoising strength:'):].strip())
+                        else:
+                            print('unsupported parameter:', y)
+            else:
+                data['input'] = ', '.join([x.strip() for x in x.split(',') if x])
+                for z, w in [('{ ', '{'), (' }', '}'), ('[ ', '['), (' ]', ']'), ('( ', '('), (' )', ')')]:
+                    data['input'] = data['input'].replace(z, w)
+        return data, NAIS_DATA_INCOMPLETE
+    except Exception as e:
+        print(e)
+        return {}, NAIS_DATA_ERROR
+
+
+def nais_data_from_local_image(path):
+    return nais_data_from_image(path)
+
+
+def nais_data_from_uploaded_image(path):
+    response = requests.get(path)
+    return nais_data_from_image(io.BytesIO(response.content))
 
 
 class Nais():
@@ -97,7 +166,7 @@ class Nais():
                 print(e)
                 return
         with open(f'{base}.json', 'wt') as f:
-            json.dump(args, f, indent=2)
+            f.write(naisgui.util.json_to_text(args))
         im_bin = self.gen_image(args)
         im = Image.open(io.BytesIO(im_bin))
 
