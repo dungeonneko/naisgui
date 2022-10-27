@@ -120,6 +120,7 @@ class Nais():
                 'mode': "RGB",
                 'include_numbers': True,
                 'regexp': r"[\w']+",
+                'stopwords': '',
             }).to_file(f'{base}_wc_pos.png')
         self.gen_wc(args['parameters']['uc'], {
                 'width': 512,
@@ -130,4 +131,5 @@ class Nais():
                 'mode': "RGB",
                 'include_numbers': True,
                 'regexp': r"[\w']+",
+                'stopwords': '',
             }).to_file(f'{base}_wc_neg.png')
