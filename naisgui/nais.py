@@ -40,32 +40,37 @@ def nais_data_from_image(arg):
             'parameters': {},
         }
         # AIBooru?
+        afterNegativePrompt = False
         for x in im.info['parameters'].split('\n'):
-            if ':' in x:
+            if not afterNegativePrompt:
                 if x.startswith('Negative prompt:'):
                     data['parameters']['uc'] = x[len('Negative prompt:'):]
+                    afterNegativePrompt = True
                 else:
-                    for y in x.split(','):
-                        y = y.strip()
-                        if y.startswith('Steps:'):
-                            data['parameters']['steps'] = int(y[len('Steps:'):].strip())
-                        elif y.startswith('CFG scale:'):
-                            data['parameters']['scale'] = int(y[len('CFG scale:'):].strip())
-                        elif y.startswith('Seed:'):
-                            data['parameters']['seed'] = int(y[len('Seed:'):].strip())
-                        elif y.startswith('Size:'):
-                            y = y[len('Size:'):].strip()
-                            w, h = y.split('x')
-                            data['parameters']['width'] = int(w.strip())
-                            data['parameters']['height'] = int(h.strip())
-                        elif y.startswith('Denoising strength:'):
-                            data['parameters']['strength'] = float(y[len('Denoising strength:'):].strip())
-                        else:
-                            print('unsupported parameter:', y)
+                    temp = ', '.join([x.strip() for x in x.split(',') if x])
+                    for z, w in [('{ ', '{'), (' }', '}'), ('[ ', '['), (' ]', ']'), ('( ', '('), (' )', ')')]:
+                        temp = temp.replace(z, w)
+                    temp += ', '
+                    data['input'] += temp
             else:
-                data['input'] = ', '.join([x.strip() for x in x.split(',') if x])
-                for z, w in [('{ ', '{'), (' }', '}'), ('[ ', '['), (' ]', ']'), ('( ', '('), (' )', ')')]:
-                    data['input'] = data['input'].replace(z, w)
+                for y in x.split(','):
+                    y = y.strip()
+                    if y.startswith('Steps:'):
+                        data['parameters']['steps'] = int(y[len('Steps:'):].strip())
+                    elif y.startswith('CFG scale:'):
+                        data['parameters']['scale'] = int(y[len('CFG scale:'):].strip())
+                    elif y.startswith('Seed:'):
+                        data['parameters']['seed'] = int(y[len('Seed:'):].strip())
+                    elif y.startswith('Size:'):
+                        y = y[len('Size:'):].strip()
+                        w, h = y.split('x')
+                        data['parameters']['width'] = int(w.strip())
+                        data['parameters']['height'] = int(h.strip())
+                    elif y.startswith('Denoising strength:'):
+                        data['parameters']['strength'] = float(y[len('Denoising strength:'):].strip())
+                    else:
+                        print('unsupported parameter:', y)
+        data['input'] = ', '.join([x.strip() for x in data['input'].split(',') if x.strip()])
         return data, NAIS_DATA_INCOMPLETE
     except Exception as e:
         print(e)
