@@ -23,6 +23,9 @@ def nais_data_from_image(arg):
         im = Image.open(arg)
         im.load()
         print(im.info)
+        if not im.info:
+            print('NO DATA')
+            return {}, NAIS_DATA_ERROR
     except Exception as e:
         return {}, NAIS_DATA_ERROR
     try:
@@ -170,6 +173,7 @@ class Nais():
             except Exception as e:
                 print(e)
                 return
+        args['input'] = args['input'].replace('\r', '').replace('\n', '').replace('\t', '')  # avoid exception in wordcloud
         with open(f'{base}.json', 'wt') as f:
             f.write(naisgui.util.json_to_text(args))
         im_bin = self.gen_image(args)

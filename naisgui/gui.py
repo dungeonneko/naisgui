@@ -212,6 +212,22 @@ class GuiImageList(QListWidget):
             if not f.endswith('.json'):
                 continue
             self.load(os.path.splitext(f)[0])
+        self.actionDeleteSelectedImages = QAction(self)
+        self.actionDeleteSelectedImages.setText('Delete Selected Images')
+        self.actionDeleteSelectedImages.setShortcut('Del')
+        self.actionDeleteSelectedImages.triggered.connect(self.delete_selected_images)
+        self.actionSaveSelectedImages = QAction(self)
+        self.actionSaveSelectedImages.setText('Save Selected Images into Zip')
+        self.actionSaveSelectedImages.setShortcut('Ctrl+Shift+S')
+        self.actionSaveSelectedImages.triggered.connect(self.save_selected_images_in_zip)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.on_custom_menu_requested)
+
+    def on_custom_menu_requested(self, pos):
+        menu = QMenu()
+        menu.addAction(self.actionSaveSelectedImages)
+        menu.addAction(self.actionDeleteSelectedImages)
+        menu.exec_(self.mapToGlobal(pos))
 
     def on_item_selection_changed(self):
         item = self.currentItem()
@@ -246,6 +262,28 @@ class GuiImageList(QListWidget):
             if os.path.exists(base + '_wc_neg.png'):
                 os.remove(base + '_wc_neg.png')
             self.takeItem(self.row(i))
+
+    def save_selected_images_in_zip(self):
+        if len(self.selectedItems()) == 0:
+            return
+        fpath, _ = QFileDialog.getSaveFileName(self, 'Save Selected Images into Zip', g_nais.output_folder(), '*.zip')
+        if not fpath:
+            return
+
+        import shutil, tempfile
+        temp_dir = os.path.join(g_nais.output_folder(), '.temp')
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+        os.makedirs(temp_dir)
+        for i in self.selectedItems():
+            name = i.data(Qt.UserRole + 0)
+            src = os.path.join(g_nais.output_folder(), name + '.png')
+            dst = os.path.join(temp_dir, name + '.png')
+            shutil.copy(src, dst)
+        shutil.make_archive(os.path.splitext(fpath)[0], format='zip', root_dir=temp_dir)
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+
 
     def startDrag(self, supportedActions:Qt.DropActions) -> None:
         item = self.currentItem()
@@ -285,10 +323,13 @@ class GuiImageData(QWidget):
         self.setLayout(layout)
 
     def setImage(self, name):
-        base = os.path.join(g_nais.output_folder(), name)
-        self._params.setPlainText(read_text(base + '.json'))
-        self._pos.setImage(base + '_wc_pos.png')
-        self._neg.setImage(base + '_wc_neg.png')
+        try:
+            base = os.path.join(g_nais.output_folder(), name)
+            self._params.setPlainText(read_text(base + '.json'))
+            self._pos.setImage(base + '_wc_pos.png')
+            self._neg.setImage(base + '_wc_neg.png')
+        except FileNotFoundError as e:
+            print(e)
 
 
 class GuiMain(QMainWindow):
@@ -336,11 +377,8 @@ class GuiMain(QMainWindow):
         action.triggered.connect(self.close)
         menu_file.addAction(action)
         menu_edit = self.menuBar().addMenu('Edit')
-        action = QAction(self)
-        action.setText('Delete Selected Images')
-        action.setShortcut('Del')
-        action.triggered.connect(self._image_list.delete_selected_images)
-        menu_edit.addAction(action)
+        menu_edit.addAction(self._image_list.actionSaveSelectedImages)
+        menu_edit.addAction(self._image_list.actionDeleteSelectedImages)
         menu_window = self.menuBar().addMenu('Window')
         menu_window.addAction(self._prompt.parent().toggleViewAction())
         menu_window.addAction(self._image_list.parent().toggleViewAction())
