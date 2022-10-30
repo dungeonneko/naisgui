@@ -446,7 +446,7 @@ class GuiImageList(QWidget):
                 send2trash.send2trash(base + '_wc_pos.png')
             if os.path.exists(base + '_wc_neg.png'):
                 send2trash.send2trash(base + '_wc_neg.png')
-            self._list.takeItem(self.row(i))
+            self._list.takeItem(self._list.row(i))
 
     def save_selected_images_in_zip(self):
         if len(self._list.selectedItems()) == 0:
