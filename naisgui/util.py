@@ -37,7 +37,7 @@ class NaisJob(QThread):
             if len(self._task) > 0:
                 self._done += 1
                 self.jobStatusChanged.emit(self._done, self._num, f'Processing... {self._done}/{self._num}')
-                self._task.pop(0)()
+                self._task.pop(0)[1]()
                 if len(self._task) == 0 and not self._canceling:
                     self.jobStatusChanged.emit(self._done, self._num, f'Completed. {self._done}/{self._num}')
                     self._done = 0
@@ -50,13 +50,13 @@ class NaisJob(QThread):
             time.sleep(0.5)
             continue
 
-    def append(self, task):
-        self._task.append(task)
+    def append(self, ch: int, task: callable):
+        self._task.append((ch, task))
         self._num += 1
         self.jobStatusChanged.emit(self._done, self._num, f'Processing... {self._done}/{self._num}')
 
-    def cancel(self):
-        self._task.clear()
+    def cancel(self, ch: int):
+        self._task = [(c, task) for c, task in self._task if c != ch]
         self._canceling = True
         self.jobStatusChanged.emit(self._done, self._num, f'Cancelling... {self._done}/{self._num}')
 
