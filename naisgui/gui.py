@@ -332,20 +332,26 @@ data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
         self._text.setPlainText(text)
 
 
-class GuiImageList(QListWidget):
+class GuiImageList(QWidget):
     itemChanged = Signal(str)
 
     def __init__(self):
         super().__init__()
-        self.setAcceptDrops(False)
         self.setWindowTitle('List')
-        self.setContentsMargins(0,0,0,0)
-        self.setSpacing(0)
-        self.setIconSize(QSize(64, 64))
-        self.setViewMode(QListWidget.IconMode)
-        self.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.itemSelectionChanged.connect(self.on_item_selection_changed)
+        self._filter = QLineEdit()
+        self._filter.textChanged.connect(self.on_filter_changed)
+        self._list = QListWidget()
+        self._list.setAcceptDrops(False)
+        self._list.setContentsMargins(0,0,0,0)
+        self._list.setSpacing(0)
+        self._list.setIconSize(QSize(64, 64))
+        self._list.setViewMode(QListWidget.IconMode)
+        self._list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self._list.itemSelectionChanged.connect(self.on_item_selection_changed)
+        self._list.customContextMenuRequested.connect(self.on_custom_menu_requested)
+        self._list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._list.startDrag = self.startDrag
         self.actionDeleteSelectedImages = QAction(self)
         self.actionDeleteSelectedImages.setText('Delete Selected Images')
         self.actionDeleteSelectedImages.setShortcut('Del')
@@ -362,8 +368,16 @@ class GuiImageList(QListWidget):
         self.actionRefresh.setText('Refresh Image List')
         self.actionRefresh.setShortcut('Ctrl+R')
         self.actionRefresh.triggered.connect(self.refresh)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.on_custom_menu_requested)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(2,2,2,2)
+        layout.setMargin(2)
+        layout.setSpacing(2)
+        hlayout = QHBoxLayout()
+        hlayout.addWidget(QLabel('Filter:'))
+        hlayout.addWidget(self._filter)
+        layout.addLayout(hlayout)
+        layout.addWidget(self._list)
+        self.setLayout(layout)
         self.refresh()
 
     def on_custom_menu_requested(self, pos):
@@ -372,10 +386,26 @@ class GuiImageList(QListWidget):
         menu.addAction(self.actionRefresh)
         menu.addAction(self.actionSaveSelectedImages)
         menu.addAction(self.actionDeleteSelectedImages)
-        menu.exec_(self.mapToGlobal(pos))
+        menu.exec_(self._list.mapToGlobal(pos))
+
+    def on_filter_changed(self):
+        tags = self._filter.text().split(',')
+        for i in range(self._list.count() - 1):
+            item = self._list.item(i)
+            data = item.data(Qt.UserRole + 1)
+            input_tags = data['input']
+            hidden = False
+            for t in tags:
+                t = t.strip()
+                if not t:
+                    continue
+                if t not in input_tags:
+                    hidden = True
+                    break
+            item.setHidden(hidden)
 
     def on_item_selection_changed(self):
-        item = self.currentItem()
+        item = self._list.currentItem()
         if item is None:
             return
         name = item.data(Qt.UserRole + 0)
@@ -387,13 +417,15 @@ class GuiImageList(QListWidget):
 
     def add(self, name: str):
         base = os.path.join(g_nais.output_folder(), name)
+        data = json.loads(read_text(base + '.json'))
         item = QListWidgetItem()
         item.setIcon(QIcon(base + '_tm.png'))
         item.setData(Qt.UserRole + 0, name)
-        self.addItem(item)
+        item.setData(Qt.UserRole + 1, data)
+        self._list.addItem(item)
 
     def refresh(self):
-        self.clear()
+        self._list.clear()
         self._items = {}
         for f in os.listdir(g_nais.output_folder()):
             if not f.endswith('.json'):
@@ -401,7 +433,7 @@ class GuiImageList(QListWidget):
             self.load(os.path.splitext(f)[0])
 
     def delete_selected_images(self):
-        for i in self.selectedItems():
+        for i in self._list.selectedItems():
             name = i.data(Qt.UserRole + 0)
             base = os.path.join(g_nais.output_folder(), name)
             if os.path.exists(base + '.png'):
@@ -414,10 +446,10 @@ class GuiImageList(QListWidget):
                 send2trash.send2trash(base + '_wc_pos.png')
             if os.path.exists(base + '_wc_neg.png'):
                 send2trash.send2trash(base + '_wc_neg.png')
-            self.takeItem(self.row(i))
+            self._list.takeItem(self.row(i))
 
     def save_selected_images_in_zip(self):
-        if len(self.selectedItems()) == 0:
+        if len(self._list.selectedItems()) == 0:
             return
         fpath, _ = QFileDialog.getSaveFileName(self, 'Save Selected Images into Zip', g_nais.output_folder(), '*.zip')
         if not fpath:
@@ -428,7 +460,7 @@ class GuiImageList(QListWidget):
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
         os.makedirs(temp_dir)
-        for i in self.selectedItems():
+        for i in self._list.selectedItems():
             name = i.data(Qt.UserRole + 0)
             src = os.path.join(g_nais.output_folder(), name + '.png')
             dst = os.path.join(temp_dir, name + '.png')
@@ -438,7 +470,7 @@ class GuiImageList(QListWidget):
             shutil.rmtree(temp_dir)
 
     def show_in_explorer(self):
-        item = self.currentItem()
+        item = self._list.currentItem()
         if not item:
             return
         name = item.data(Qt.UserRole + 0)
@@ -453,10 +485,10 @@ class GuiImageList(QListWidget):
             subprocess.Popen(['xdg-open', path])
 
     def startDrag(self, supportedActions:Qt.DropActions) -> None:
-        item = self.currentItem()
+        item = self._list.currentItem()
         pathabs = os.path.abspath(os.path.join(g_nais.output_folder(), item.data(Qt.UserRole + 0) + '.png'))
         path = QUrl.fromLocalFile(pathabs)
-        drag = QDrag(self)
+        drag = QDrag(self._list)
         mime = QMimeData()
         mime.setUrls([path])
         drag.setMimeData(mime)
