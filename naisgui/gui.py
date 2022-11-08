@@ -8,6 +8,7 @@ from naisgui.util import *
 from PySide2.QtCore import *
 from PySide2.QtGui import *
 from PySide2.QtWidgets import *
+from PIL.ImageQt import ImageQt
 
 
 g_nais = Nais()
@@ -63,12 +64,14 @@ class GuiImageVariations(QWidget):
     def __init__(self):
         super().__init__()
         self._data = {}
+        self._input = QPlainTextEdit()
         self._scale = GuiFromToStep(QDoubleSpinBox)
         self._scale.setMinimum(1.1)
         self._scale.setMaximum(100.0)
         self._scale.setValue(11)
         self._scale.step.setMinimum(0.01)
         self._scale.step.setMaximum(100.0)
+        self._scale.step.setValue(0.5)
         self._step = GuiFromToStep(QSpinBox)
         self._step.setMinimum(1)
         self._step.setMaximum(50)
@@ -82,6 +85,7 @@ class GuiImageVariations(QWidget):
             QCheckBox('plms'),
             QCheckBox('ddim')]
         self._randomSeed = QCheckBox()
+        self._uc = QPlainTextEdit()
         self._repeat = QSpinBox()
         self._repeat.setSuffix(' Times')
         self._repeat.setMinimum(1)
@@ -94,10 +98,12 @@ class GuiImageVariations(QWidget):
             smplayout.addWidget(smp)
         vlayout = QVBoxLayout()
         layout = QFormLayout()
+        layout.addRow('Input:', self._input)
         layout.addRow('Sampler:', smplayout)
         layout.addRow('Scale:', self._scale)
         layout.addRow('Steps:', self._step)
         layout.addRow('Random Seed:', self._randomSeed)
+        layout.addRow('UC:', self._uc)
         layout.addRow('Repeat:', self._repeat)
         vlayout.addLayout(layout)
         hlayout = QHBoxLayout()
@@ -113,25 +119,34 @@ class GuiImageVariations(QWidget):
     def setImage(self, name):
         try:
             base = os.path.join(g_nais.output_folder(), name)
-            self._data = json.loads(read_text(base + '.json'))
+            self._data = text_to_json(read_text(base + '.json'))
+            self._input.setPlainText(self._data['input'])
+            self._uc.setPlainText(self._data['parameters']['uc'])
+        except json.JSONDecodeError as e:
+            self._data = {}
+            print(e)
         except FileNotFoundError as e:
             self._data = {}
             print(e)
 
     def _job_impl(self, name, text: str):
-        while True:
+        for i in range(5):
             try:
                 g_nais.save_image(name, text)
                 self.generated.emit(name)
                 break
-            except RuntimeError as e:
+            except Exception as e:
                 print(e)
                 time.sleep(1)
             continue
 
     def gen(self):
         data = copy.deepcopy(self._data)
+        data['input'] = self._input.toPlainText()
+        data['parameters']['uc'] = self._uc.toPlainText()
         samplers = [smp.text() for smp in self._samplers if smp.isChecked()]
+        if not samplers:
+            samplers = [data['parameters']['sampler']]
         for smp in samplers:
             data['parameters']['sampler'] = smp
             for scl in self._scale.range():
@@ -157,6 +172,7 @@ class GuiData(QWidget):
     def __init__(self):
         super().__init__()
         self._text = NaisCodeEditor()
+        self._text.setLineWrapMode(QPlainTextEdit.WidgetWidth)
         self._text.textChanged.connect(self.textChanged.emit)
         self._text.setAcceptDrops(False)
         self._mask = QCheckBox('Never change n_sample, steps, width, height by Image Drop')
@@ -198,7 +214,7 @@ class GuiData(QWidget):
 
         data = {}
         try:
-            data = json.loads(self.toPlainText())
+            data = text_to_json(self.toPlainText())
         except Exception as e:
             pass
 
@@ -215,47 +231,15 @@ class GuiData(QWidget):
 
 class GuiPrompt(QWidget):
     generated = Signal(str)
-    DefaultScript = '''\
-import random
-
-# Random Seed, Sampler, Scale
-data['parameters']['seed'] = random.randint(0, 4294967295)
-data['parameters']['sampler'] = random.choice(['k_euler_ancestral', 'k_euler', 'k_lms', 'plms', 'ddim'])
-data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
-
-# Scaling Up by Image Generation
-# N is repeat times
-# I is index
-# data['parameters']['seed'] = 1
-# data['parameters']['scale'] = 2.0 + (12.0 - 2.0) * I / N
-'''
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Input')
         self._text = GuiData()
-        self._text.setPlainText('''\
-{
-  "input": "Hatsune Miku",
-  "model": "nai-diffusion",
-  "parameters": {
-    "n_samples": 1,
-    "seed": 1,
-    "noise": 0.2,
-    "strength": 0.7,
-    "steps": 28,
-    "scale": 11,
-    "width": 512,
-    "height": 768,
-    "uc": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry,",
-    "sampler": "k_euler_ancestral"
-  }
-}
-''')
         self._tweak = NaisCodeEditor()
-        self._tweak.setPlainText(GuiPrompt.DefaultScript)
         self._preview = NaisCodeEditor()
         self._preview.setReadOnly(True)
+        self._preview.setLineWrapMode(QPlainTextEdit.WidgetWidth)
         self._repeat = QSpinBox()
         self._repeat.setMinimum(1)
         self._repeat.setMaximum(50000)
@@ -278,13 +262,65 @@ data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
         hlayout.addWidget(self._buttonStop)
         layout.addLayout(hlayout)
         self.setLayout(layout)
-
         self._text.textChanged.connect(self.on_context_changed)
         self._tweak.textChanged.connect(self.on_context_changed)
+        self.loadDfaultInput()
+        self.newTweakScript()
         self.on_context_changed()
 
+    def loadDfaultInput(self):
+        text = read_text(os.path.join(g_nais.output_folder(), 'defaultinput.json'))
+        if not text:
+            text = '''\
+{
+  "input": "Hatsune Miku",
+  "model": "nai-diffusion",
+  "parameters": {
+    "n_samples": 1,
+    "seed": 1,
+    "noise": 0.2,
+    "strength": 0.7,
+    "steps": 28,
+    "scale": 11,
+    "width": 512,
+    "height": 768,
+    "uc": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry,",
+    "sampler": "k_euler_ancestral"
+  }
+}
+'''
+        self._text.setPlainText(text)
+
+    def saveDefaultInput(self):
+        try:
+            text = json_to_text(text_to_json(self._text.toPlainText()))
+            with open(os.path.join(g_nais.output_folder(), 'defaultinput.json'), 'wt') as f:
+                f.write(text)
+        except json.JSONDecodeError as e:
+            print(e)
+
     def newTweakScript(self):
-        self._tweak.setPlainText(GuiPrompt.DefaultScript)
+        text = read_text(os.path.join(g_nais.output_folder(), 'defaultscript.py'))
+        if not text:
+            text = '''\
+import random
+
+# Random Seed, Sampler, Scale
+data['parameters']['seed'] = random.randint(0, 4294967295)
+data['parameters']['sampler'] = random.choice(['k_euler_ancestral', 'k_euler', 'k_lms', 'plms', 'ddim'])
+data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
+
+# Scaling Up by Image Generation
+# N is repeat times
+# I is index
+# data['parameters']['seed'] = 1
+# data['parameters']['scale'] = 2.0 + (12.0 - 2.0) * I / N
+'''
+        self._tweak.setPlainText(text)
+
+    def saveDefaultScript(self):
+        with open(os.path.join(g_nais.output_folder(), 'defaultscript.py'), 'wt') as f:
+            f.write(self._tweak.toPlainText())
 
     def saveTweakScript(self):
         fpath, _ = QFileDialog.getSaveFileName(self, 'Save Script', g_nais.output_folder(), '*.py')
@@ -303,7 +339,7 @@ data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
                 g_nais.save_image(name, text)
                 self.generated.emit(name)
                 break
-            except RuntimeError as e:
+            except Exception as e:
                 print(e)
                 time.sleep(1)
             continue
@@ -313,12 +349,12 @@ data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
 
     def gen(self, N, I):
         try:
-            data = json.loads(self._text.toPlainText())
+            data = text_to_json(self._text.toPlainText())
             exec(self._tweak.toPlainText())
         except Exception as e:
             return str(e)
         try:
-            text = naisgui.util.json_to_text(data)
+            text = json_to_text(data)
         except Exception as e:
             return str(e)
         return text
@@ -358,7 +394,6 @@ class GuiImageList(QWidget):
         self.actionDeleteSelectedImages.triggered.connect(self.delete_selected_images)
         self.actionSaveSelectedImages = QAction(self)
         self.actionSaveSelectedImages.setText('Save Selected Images into Zip')
-        self.actionSaveSelectedImages.setShortcut('Ctrl+Shift+S')
         self.actionSaveSelectedImages.triggered.connect(self.save_selected_images_in_zip)
         self.actionShowInExplorer = QAction(self)
         self.actionShowInExplorer.setText('Show in Explorer')
@@ -417,7 +452,11 @@ class GuiImageList(QWidget):
 
     def add(self, name: str):
         base = os.path.join(g_nais.output_folder(), name)
-        data = json.loads(read_text(base + '.json'))
+        try:
+            data = text_to_json(read_text(base + '.json'))
+        except json.JSONDecodeError as e:
+            print(e)
+            return
         item = QListWidgetItem()
         item.setIcon(QIcon(base + '_tm.png'))
         item.setData(Qt.UserRole + 0, name)
@@ -442,10 +481,6 @@ class GuiImageList(QWidget):
                 send2trash.send2trash(base + '.json')
             if os.path.exists(base + '_tm.png'):
                 send2trash.send2trash(base + '_tm.png')
-            if os.path.exists(base + '_wc_pos.png'):
-                send2trash.send2trash(base + '_wc_pos.png')
-            if os.path.exists(base + '_wc_neg.png'):
-                send2trash.send2trash(base + '_wc_neg.png')
             self._list.takeItem(self._list.row(i))
 
     def save_selected_images_in_zip(self):
@@ -455,6 +490,13 @@ class GuiImageList(QWidget):
         if not fpath:
             return
 
+        prog = QProgressDialog()
+        prog.setMinimum(0)
+        prog.setMaximum(0)
+        prog.open()
+        prog.update()
+
+        preprocess = read_text(os.path.join(g_nais.output_folder(), 'archive_preprocess.txt'))
         import shutil, tempfile
         temp_dir = os.path.join(g_nais.output_folder(), '.temp')
         if os.path.exists(temp_dir):
@@ -464,10 +506,16 @@ class GuiImageList(QWidget):
             name = i.data(Qt.UserRole + 0)
             src = os.path.join(g_nais.output_folder(), name + '.png')
             dst = os.path.join(temp_dir, name + '.png')
-            shutil.copy(src, dst)
+            if preprocess:
+                os.system(preprocess.format(src, dst))
+            else:
+                shutil.copy(src, dst)
+            prog.update()
         shutil.make_archive(os.path.splitext(fpath)[0], format='zip', root_dir=temp_dir)
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
+
+        prog.autoClose()
 
     def show_in_explorer(self):
         item = self._list.currentItem()
@@ -501,9 +549,20 @@ class GuiImageViewer(NaisImage):
         self.setWindowTitle('Viewer')
         self.setMinimumSize(QSize(256, 256))
         self.smoothTransformation = True
+        self._base_path = ''
+        self._image = None
+        self._rate = 0.125
 
     def setImage(self, name):
-        super().setImage(os.path.join(g_nais.output_folder(), name + '.png'))
+        try:
+            self._base_path = os.path.join(g_nais.output_folder(), name)
+            self._image = Image.open(self._base_path + '.png')
+            tm = self._image.copy()
+            tm.thumbnail((64, 64), Image.ANTIALIAS)
+            tm.save(f'{self._base_path}_tm.png', "PNG")
+            super().setImage(ImageQt(self._image))
+        except FileNotFoundError as e:
+            print(e)
 
 
 class GuiImageData(QWidget):
@@ -512,13 +571,9 @@ class GuiImageData(QWidget):
         self.setWindowTitle('Data')
         self._params = NaisCodeEditor()
         self._params.setReadOnly(True)
-        self._pos = NaisImage()
-        self._neg = NaisImage()
         layout = QVBoxLayout()
         layout.addWidget(self._params)
         layout2 = QHBoxLayout()
-        layout2.addWidget(self._pos)
-        layout2.addWidget(self._neg)
         layout.addLayout(layout2)
         self.setLayout(layout)
 
@@ -526,8 +581,6 @@ class GuiImageData(QWidget):
         try:
             base = os.path.join(g_nais.output_folder(), name)
             self._params.setPlainText(read_text(base + '.json'))
-            self._pos.setImage(base + '_wc_pos.png')
-            self._neg.setImage(base + '_wc_neg.png')
         except FileNotFoundError as e:
             print(e)
 
@@ -562,18 +615,31 @@ class GuiMain(QMainWindow):
 
         menu_file = self.menuBar().addMenu('File')
         action = QAction(self)
-        action.setText('New Script')
+        action.setText('Load Default Input')
         action.setShortcut('Ctrl+N')
+        action.triggered.connect(self._prompt.loadDfaultInput)
+        menu_file.addAction(action)
+        action = QAction(self)
+        action.setText('Save Default Input')
+        action.triggered.connect(self._prompt.saveDefaultInput)
+        menu_file.addAction(action)
+        action = QAction(self)
+        action.setText('Load Default Script')
+        action.setShortcut('Ctrl+Shift+N')
         action.triggered.connect(self._prompt.newTweakScript)
         menu_file.addAction(action)
         action = QAction(self)
+        action.setText('Save Default Script')
+        action.triggered.connect(self._prompt.saveDefaultScript)
+        menu_file.addAction(action)
+        action = QAction(self)
         action.setText('Save Script')
-        action.setShortcut('Ctrl+S')
+        action.setShortcut('Ctrl+Shift+S')
         action.triggered.connect(self._prompt.saveTweakScript)
         menu_file.addAction(action)
         action = QAction(self)
         action.setText('Open Script')
-        action.setShortcut('Ctrl+O')
+        action.setShortcut('Ctrl+Shift+O')
         action.triggered.connect(self._prompt.openTweakScript)
         menu_file.addAction(action)
         action = QAction(self)
@@ -584,6 +650,10 @@ class GuiMain(QMainWindow):
         menu_edit.addAction(self._image_list.actionRefresh)
         menu_edit.addAction(self._image_list.actionSaveSelectedImages)
         menu_edit.addAction(self._image_list.actionDeleteSelectedImages)
+        action = QAction(self)
+        action.setText('Edit Archive Preprocess')
+        action.triggered.connect(self.edit_archive_preprocess)
+        menu_edit.addAction(action)
         menu_window = self.menuBar().addMenu('Window')
         menu_window.addAction(self._prompt.parent().toggleViewAction())
         menu_window.addAction(self._image_list.parent().toggleViewAction())
@@ -592,6 +662,16 @@ class GuiMain(QMainWindow):
         menu_window.addAction(self._image_var.parent().toggleViewAction())
         self._job.start()
         self.load_layout()
+
+    def edit_archive_preprocess(self) -> None:
+        path = os.path.join(g_nais.output_folder(), 'archive_preprocess.txt')
+        txt = read_text(path)
+        if not txt:
+            txt = 'realesrgan-ncnn-vulkan.exe -i {} -o {}'
+        txt, ok = QInputDialog.getText(self, 'Edit Archive Preprocess', 'Command:', QLineEdit.Normal, txt)
+        if ok:
+            with open(path, 'wt') as f:
+                f.write(txt)
 
     def closeEvent(self, event) -> None:
         self.save_layout()
@@ -624,6 +704,12 @@ class GuiMain(QMainWindow):
 
 def NaisGui():
     app = QApplication(sys.argv)
+
+    # CLEANUP OLD FILES
+    for f in os.listdir(g_nais.output_folder()):
+        if f.endswith('_wc_pos.png') or f.endswith('_wc_neg.png'):
+            path = os.path.join(g_nais.output_folder(), f)
+            send2trash.send2trash(path)
 
     # LOG IN
     username = os.environ['NAI_USERNAME'] if 'NAI_USERNAME' in os.environ else ''

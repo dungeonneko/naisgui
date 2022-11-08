@@ -5,16 +5,23 @@ import time
 from PySide2.QtCore import *
 from PySide2.QtGui import *
 from PySide2.QtWidgets import *
+import threading
 
 
 def read_text(path: str):
-    with open(path, 'rt') as f:
-        return f.read()
+    try:
+        with open(path, 'rt') as f:
+            return f.read()
+    except FileNotFoundError as e:
+        print(e)
+        return ''
 
 
 def json_to_text(obj):
     return json.dumps(obj, sort_keys=True, indent=2)
 
+def text_to_json(txt):
+    return json.loads(txt.replace('\r', '').replace('\t', '').replace('\n', '').replace('\u3000', ' '))
 
 class NaisJob(QThread):
     jobStatusChanged = Signal(int, int, str)
@@ -24,8 +31,8 @@ class NaisJob(QThread):
         self._task = []
         self._exit = False
         self._canceling = False
-        self._num = 0
-        self._done = 0
+        self._max = 0
+        self._lock = threading.Lock()
 
     def __del__(self):
         self._exit = True
@@ -35,30 +42,39 @@ class NaisJob(QThread):
     def run(self):
         while not self._exit:
             if len(self._task) > 0:
-                self._done += 1
-                self.jobStatusChanged.emit(self._done, self._num, f'Processing... {self._done}/{self._num}')
-                self._task.pop(0)[1]()
+                self._lock.acquire()
+                num = len(self._task)
+                self._lock.release()
+                if num > 0:
+                    self._lock.acquire()
+                    prg = self._max - num
+                    self.jobStatusChanged.emit(prg, num, f'Processing... {prg}/{self._max}')
+                    tsk = self._task.pop(0)[1]
+                    self._lock.release()
+                    tsk()
                 if len(self._task) == 0 and not self._canceling:
-                    self.jobStatusChanged.emit(self._done, self._num, f'Completed. {self._done}/{self._num}')
-                    self._done = 0
-                    self._num = 0
-            if self._canceling:
-                self.jobStatusChanged.emit(0, 1, f'Cancelled.')
-                self._done = 0
-                self._num = 0
-                self._canceling = False
-            time.sleep(0.5)
+                    self.jobStatusChanged.emit(1, 1, f'Completed. {self._max}/{self._max}')
+                    self._max = 0
+            time.sleep(0.125)
             continue
 
     def append(self, ch: int, task: callable):
+        self._lock.acquire()
         self._task.append((ch, task))
-        self._num += 1
-        self.jobStatusChanged.emit(self._done, self._num, f'Processing... {self._done}/{self._num}')
+        num = len(self._task)
+        self._max = max(self._max, num)
+        prg = self._max - num
+        self.jobStatusChanged.emit(prg, self._max, f'Processing... {prg}/{self._max}')
+        self._lock.release()
 
     def cancel(self, ch: int):
+        self._lock.acquire()
         self._task = [(c, task) for c, task in self._task if c != ch]
-        self._canceling = True
-        self.jobStatusChanged.emit(self._done, self._num, f'Cancelling... {self._done}/{self._num}')
+        num = len(self._task)
+        self._max = max(self._max, num)
+        prg = self._max - num
+        self.jobStatusChanged.emit(prg, self._max, f'Processing... {prg}/{self._max}')
+        self._lock.release()
 
 
 class NaisLogin(QDialog):
@@ -131,8 +147,16 @@ class NaisImage(QLabel):
         self.setScaledContents(False)
         self.smoothTransformation = False
 
-    def setImage(self, path):
-        self._pm = QPixmap(path)
+    def toImagePos(self, x, y):
+        sz = self.size()
+        pm = self.pixmap().size()
+        x -= (int)(sz.width() / 2 - pm.width() / 2)
+        y -= (int)(sz.height() / 2 - pm.height() / 2)
+        ss = self._pm.size()
+        return (int((x / pm.width()) * ss.width()), int((y / pm.height()) * ss.height()))
+
+    def setImage(self, path_or_img):
+        self._pm = QPixmap(path_or_img) if path_or_img is str else QPixmap.fromImage(path_or_img).copy()
         self.setPixmap(self._pm.scaled(
             self.size(),
             Qt.KeepAspectRatio,

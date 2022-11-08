@@ -8,7 +8,7 @@ a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=[],
-    datas=[('venv/Lib/site-packages/wordcloud/stopwords', 'wordcloud'), ('venv/Lib/site-packages/wordcloud/DroidSansMono.ttf', 'wordcloud')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -3,4 +3,3 @@ Pillow
 PySide2
 requests
 send2trash
-wordcloud

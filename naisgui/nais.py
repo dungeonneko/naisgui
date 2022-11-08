@@ -3,14 +3,13 @@ import io
 import json
 import os
 import requests
-import naisgui.util
+from naisgui.util import *
 from argon2 import low_level
 from base64 import urlsafe_b64encode
 from hashlib import blake2b
 from http.cookies import SimpleCookie
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
-from wordcloud import WordCloud
 
 
 NAIS_DATA_COMPLETE = 0
@@ -98,7 +97,7 @@ class Nais():
         self._accessKey = None
         self.settings = {
             'root': 'https://api.novelai.net',
-            'timeout': 30.0,
+            'timeout': 10.0,
             'output_folder': '.data',
         }
 
@@ -131,9 +130,9 @@ class Nais():
 
     def gen_image(self, args):
         if type(args) is str:
-            args = json.loads(args)
+            args = text_to_json(args)
         resp = self.post('/ai/generate-image', args)
-        print(resp)
+        print(resp, resp.content)
         if resp.status_code != 201:
             raise RuntimeError("Bad Response!")
         text = resp.content.decode('utf-8')
@@ -147,35 +146,16 @@ class Nais():
         bin = base64.b64decode(data['data'])
         return bin
 
-    def gen_wc(self, prompt, wc_settings):
-        tags = [x.strip() for x in prompt.split(',')]
-        scaled = {}
-        for tag in tags:
-            if tag.startswith('{'):
-                scale = 1.05 ** tag.count('{')
-                tag = tag.replace('{', '').replace('}', '')
-            elif tag.startswith('['):
-                scale = 0.95238 ** tag.count('[')
-                tag = tag.replace('[', '').replace(']', '')
-            else:
-                scale = 1
-            if tag not in scaled:
-                scaled[tag] = scale
-            else:
-                scaled[tag] = max(scaled[tag], scale)
-        return WordCloud(**wc_settings).generate_from_frequencies(scaled)
-
     def save_image(self, name, args):
         base = os.path.join(self.output_folder(), name)
         if type(args) is str:
             try:
-                args = json.loads(args)
+                args = text_to_json(args)
             except Exception as e:
                 print(e)
                 return
-        args['input'] = args['input'].replace('\r', '').replace('\n', '').replace('\t', '')  # avoid exception in wordcloud
         with open(f'{base}.json', 'wt') as f:
-            f.write(naisgui.util.json_to_text(args))
+            f.write(json_to_text(args))
         im_bin = self.gen_image(args)
         im = Image.open(io.BytesIO(im_bin))
 
@@ -185,29 +165,7 @@ class Nais():
         metadata.add_text("Source", 'Stable Diffusion 81274D13')  # FIXME
         metadata.add_text("Description", args["input"])
         metadata.add_text("Comment", json.dumps(args["parameters"], sort_keys=True))
-
         im.save(f'{base}.png', 'PNG', pnginfo=metadata)
         im.thumbnail((64, 64), Image.ANTIALIAS)
         im.save(f'{base}_tm.png', "PNG")
-        self.gen_wc(args['input'], {
-                'width': 512,
-                'height': 512,
-                'relative_scaling': 1,
-                'normalize_plurals': False,
-                'background_color': "white",
-                'mode': "RGB",
-                'include_numbers': True,
-                'regexp': r"[\w']+",
-                'stopwords': '',
-            }).to_file(f'{base}_wc_pos.png')
-        self.gen_wc(args['parameters']['uc'], {
-                'width': 512,
-                'height': 512,
-                'relative_scaling': 1,
-                'normalize_plurals': False,
-                'background_color': "black",
-                'mode': "RGB",
-                'include_numbers': True,
-                'regexp': r"[\w']+",
-                'stopwords': '',
-            }).to_file(f'{base}_wc_neg.png')
+
