@@ -685,12 +685,13 @@ class GuiMain(QMainWindow):
         self._job.jobStatusChanged.connect(self.on_job_status_changed)
         self.statusBar().addWidget(self._progress, True)
         self.setDockOptions(QMainWindow.AllowNestedDocks | QMainWindow.AllowTabbedDocks)
+        self._menu_window = self.menuBar().addMenu('Window')
         self.dock(self._prompt, Qt.LeftDockWidgetArea)
-        self.dock(self._archives, Qt.RightDockWidgetArea)
-        self.dock(self._image_viewer, Qt.RightDockWidgetArea)
-        self.dock(self._image_var, Qt.RightDockWidgetArea)
-        self.dock(self._image_data, Qt.RightDockWidgetArea)
-        self.dock(self._image_list, Qt.RightDockWidgetArea)
+        r = self.dock(self._archives, Qt.RightDockWidgetArea)
+        self.dock(self._image_viewer, Qt.RightDockWidgetArea, r)
+        self.dock(self._image_var, Qt.RightDockWidgetArea, r)
+        self.dock(self._image_data, Qt.RightDockWidgetArea, r)
+        self.dock(self._image_list, Qt.RightDockWidgetArea, r)
 
         menu_file = self.menuBar().addMenu('File')
         action = QAction(self)
@@ -733,12 +734,6 @@ class GuiMain(QMainWindow):
         action.setText('Edit Export Preprocess')
         action.triggered.connect(self.edit_export_preprocess)
         menu_edit.addAction(action)
-        menu_window = self.menuBar().addMenu('Window')
-        menu_window.addAction(self._prompt.parent().toggleViewAction())
-        menu_window.addAction(self._image_list.parent().toggleViewAction())
-        menu_window.addAction(self._image_data.parent().toggleViewAction())
-        menu_window.addAction(self._image_viewer.parent().toggleViewAction())
-        menu_window.addAction(self._image_var.parent().toggleViewAction())
         self._job.start()
         self.load_layout()
 
@@ -772,13 +767,17 @@ class GuiMain(QMainWindow):
         self._progress.setMaximum(num)
         self._progress.setValue(done)
 
-    def dock(self, widget, area):
+    def dock(self, widget, area, tabifyParent = None):
         dock = QDockWidget()
         dock.setWidget(widget)
         dock.setWindowTitle(widget.windowTitle())
         dock.setObjectName(widget.windowTitle())
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.addDockWidget(area, dock)
+        if tabifyParent:
+            self.tabifyDockWidget(tabifyParent, dock)
+        self._menu_window.addAction(dock.toggleViewAction())
+        return dock
 
 
 def NaisGui():
