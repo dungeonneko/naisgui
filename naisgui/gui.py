@@ -16,6 +16,21 @@ g_job = NaisJob()
 
 JOB_CHANNEL_MAIN = 0
 JOB_CHANNEL_VARIATIONS = 1
+JOB_CHANNEL_REGENERATION = 2
+
+
+def create_list_widget_item(name: str):
+    base = os.path.join(g_nais.output_folder(), name)
+    try:
+        data = text_to_json(read_text(base + '.json'))
+    except json.JSONDecodeError as e:
+        print(e)
+        return
+    item = QListWidgetItem()
+    item.setIcon(QIcon(base + '_tm.png'))
+    item.setData(Qt.UserRole + 0, name)
+    item.setData(Qt.UserRole + 1, data)
+    return item
 
 
 class GuiFromToStep(QWidget):
@@ -130,15 +145,8 @@ class GuiImageVariations(QWidget):
             print(e)
 
     def _job_impl(self, name, text: str):
-        for i in range(5):
-            try:
-                g_nais.save_image(name, text)
-                self.generated.emit(name)
-                break
-            except Exception as e:
-                print(e)
-                time.sleep(1)
-            continue
+        if g_nais.job_save_image(name, text):
+            self.generated.emit(name)
 
     def gen(self):
         data = copy.deepcopy(self._data)
@@ -294,7 +302,7 @@ class GuiPrompt(QWidget):
     def saveDefaultInput(self):
         try:
             text = json_to_text(text_to_json(self._text.toPlainText()))
-            with open(os.path.join(g_nais.output_folder(), 'defaultinput.json'), 'wt') as f:
+            with open(os.path.join(g_nais.output_folder(), 'defaultinput.json'), 'wt', encoding='utf-8') as f:
                 f.write(text)
         except json.JSONDecodeError as e:
             print(e)
@@ -319,13 +327,13 @@ data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
         self._tweak.setPlainText(text)
 
     def saveDefaultScript(self):
-        with open(os.path.join(g_nais.output_folder(), 'defaultscript.py'), 'wt') as f:
+        with open(os.path.join(g_nais.output_folder(), 'defaultscript.py'), 'wt', encoding='utf-8') as f:
             f.write(self._tweak.toPlainText())
 
     def saveTweakScript(self):
         fpath, _ = QFileDialog.getSaveFileName(self, 'Save Script', g_nais.output_folder(), '*.py')
         if fpath:
-            with open(fpath, 'wt') as f:
+            with open(fpath, 'wt', encoding='utf-8') as f:
                 f.write(self._tweak.toPlainText())
 
     def openTweakScript(self):
@@ -334,15 +342,8 @@ data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
             self._tweak.setPlainText(read_text(fpath))
 
     def _job_impl(self, name, text: str):
-        while True:
-            try:
-                g_nais.save_image(name, text)
-                self.generated.emit(name)
-                break
-            except Exception as e:
-                print(e)
-                time.sleep(1)
-            continue
+        if g_nais.job_save_image(name, text):
+            self.generated.emit(name)
 
     def on_context_changed(self):
         self._preview.setPlainText(self.gen(self._repeat.value(), 0))
@@ -368,8 +369,70 @@ data['parameters']['scale'] = random.choice([4.0, 6.0, 8.0, 10.0, 12.0])
         self._text.setPlainText(text)
 
 
+class GuiArchiveList(QListWidget):
+    generated = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(False)
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(0)
+        self.setIconSize(QSize(32, 32))
+        self.setViewMode(QListWidget.IconMode)
+        self.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.refresh()
+        self.customContextMenuRequested.connect(self.on_custom_menu_requested)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.setWindowTitle('Archive')
+        self.actionShowInExplorer = QAction(self)
+        self.actionShowInExplorer.setText('Show in Explorer')
+        self.actionShowInExplorer.triggered.connect(self.show_in_explorer)
+        self.actionRestoreSelectedImages = QAction(self)
+        self.actionRestoreSelectedImages.setText('Restore Selected Images')
+        self.actionRestoreSelectedImages.triggered.connect(self.restore_selected_images)
+
+    def on_custom_menu_requested(self, pos):
+        menu = QMenu()
+        menu.addAction(self.actionShowInExplorer)
+        menu.addAction(self.actionRestoreSelectedImages)
+        menu.exec_(self.mapToGlobal(pos))
+
+    def refresh(self):
+        self.clear()
+        for f in os.listdir(g_nais.output_folder()):
+            name = os.path.splitext(f)[0]
+            base = os.path.join(g_nais.output_folder(), name)
+            if not f.endswith('.json'):
+                continue
+            if os.path.exists(base + '.png'):
+                continue
+            item = create_list_widget_item(name)
+            if item is not None:
+                self.addItem(item)
+
+    def show_in_explorer(self):
+        item = self.currentItem()
+        if not item:
+            return
+        name = item.data(Qt.UserRole + 0)
+        path = os.path.join(g_nais.output_folder(), name) + '.png'
+        show_in_explorer(path)
+
+    def restore_selected_images(self):
+        def _job_impl(name, text: str):
+            if g_nais.job_save_image(name, text):
+                self.generated.emit(name)
+        for item in self.selectedItems():
+            x = item.data(Qt.UserRole)
+            y = json_to_text(item.data(Qt.UserRole + 1))
+            g_job.append(JOB_CHANNEL_VARIATIONS, lambda _x=x, _y=y: _job_impl(_x, _y))
+
+
+
 class GuiImageList(QWidget):
     itemChanged = Signal(str)
+    itemArchived = Signal()
 
     def __init__(self):
         super().__init__()
@@ -392,17 +455,23 @@ class GuiImageList(QWidget):
         self.actionDeleteSelectedImages.setText('Delete Selected Images')
         self.actionDeleteSelectedImages.setShortcut('Del')
         self.actionDeleteSelectedImages.triggered.connect(self.delete_selected_images)
-        self.actionSaveSelectedImages = QAction(self)
-        self.actionSaveSelectedImages.setText('Save Selected Images into Zip')
-        self.actionSaveSelectedImages.triggered.connect(self.save_selected_images_in_zip)
+        self.actionExportSelectedImages = QAction(self)
+        self.actionExportSelectedImages.setText('Export Selected Images')
+        self.actionExportSelectedImages.triggered.connect(self.export_selected_images_in_zip)
         self.actionShowInExplorer = QAction(self)
         self.actionShowInExplorer.setText('Show in Explorer')
         self.actionShowInExplorer.setShortcut('Ctrl+E')
         self.actionShowInExplorer.triggered.connect(self.show_in_explorer)
+        self.actionArchiveSelectedImages = QAction(self)
+        self.actionArchiveSelectedImages.setText('Archive Selected Images')
+        self.actionArchiveSelectedImages.triggered.connect(self.archive_selected_images)
         self.actionRefresh = QAction(self)
         self.actionRefresh.setText('Refresh Image List')
         self.actionRefresh.setShortcut('Ctrl+R')
         self.actionRefresh.triggered.connect(self.refresh)
+        self.actionRegenerateSelectedImages = QAction(self)
+        self.actionRegenerateSelectedImages.setText('Regenerate Selected Images')
+        self.actionRegenerateSelectedImages.triggered.connect(self.regenerate_selected_images)
         layout = QVBoxLayout()
         layout.setContentsMargins(2,2,2,2)
         layout.setMargin(2)
@@ -419,7 +488,9 @@ class GuiImageList(QWidget):
         menu = QMenu()
         menu.addAction(self.actionShowInExplorer)
         menu.addAction(self.actionRefresh)
-        menu.addAction(self.actionSaveSelectedImages)
+        menu.addAction(self.actionRegenerateSelectedImages)
+        menu.addAction(self.actionExportSelectedImages)
+        menu.addAction(self.actionArchiveSelectedImages)
         menu.addAction(self.actionDeleteSelectedImages)
         menu.exec_(self._list.mapToGlobal(pos))
 
@@ -451,23 +522,16 @@ class GuiImageList(QWidget):
         self.add(name)
 
     def add(self, name: str):
-        base = os.path.join(g_nais.output_folder(), name)
-        try:
-            data = text_to_json(read_text(base + '.json'))
-        except json.JSONDecodeError as e:
-            print(e)
-            return
-        item = QListWidgetItem()
-        item.setIcon(QIcon(base + '_tm.png'))
-        item.setData(Qt.UserRole + 0, name)
-        item.setData(Qt.UserRole + 1, data)
-        self._list.addItem(item)
+        item = create_list_widget_item(name)
+        if item is not None:
+            self._list.addItem(item)
 
     def refresh(self):
         self._list.clear()
-        self._items = {}
         for f in os.listdir(g_nais.output_folder()):
             if not f.endswith('.json'):
+                continue
+            if not os.path.exists(os.path.join(g_nais.output_folder(), os.path.splitext(f)[0] + '.png')):
                 continue
             self.load(os.path.splitext(f)[0])
 
@@ -483,10 +547,10 @@ class GuiImageList(QWidget):
                 send2trash.send2trash(base + '_tm.png')
             self._list.takeItem(self._list.row(i))
 
-    def save_selected_images_in_zip(self):
+    def export_selected_images_in_zip(self):
         if len(self._list.selectedItems()) == 0:
             return
-        fpath, _ = QFileDialog.getSaveFileName(self, 'Save Selected Images into Zip', g_nais.output_folder(), '*.zip')
+        fpath, _ = QFileDialog.getSaveFileName(self, 'Export Selected Images', g_nais.output_folder(), '*.zip')
         if not fpath:
             return
 
@@ -496,7 +560,7 @@ class GuiImageList(QWidget):
         prog.open()
         prog.update()
 
-        preprocess = read_text(os.path.join(g_nais.output_folder(), 'archive_preprocess.txt'))
+        preprocess = read_text(os.path.join(g_nais.output_folder(), 'export_preprocess.txt'))
         import shutil, tempfile
         temp_dir = os.path.join(g_nais.output_folder(), '.temp')
         if os.path.exists(temp_dir):
@@ -517,20 +581,32 @@ class GuiImageList(QWidget):
 
         prog.autoClose()
 
+    def archive_selected_images(self):
+        if len(self._list.selectedItems()) == 0:
+            return
+        for i in self._list.selectedItems():
+            name = i.data(Qt.UserRole + 0)
+            src = os.path.join(g_nais.output_folder(), name + '.png')
+            os.remove(src)
+            self._list.takeItem(self._list.row(i))
+        self.itemArchived.emit()
+
+    def regenerate_selected_images(self):
+        def _job_impl(name, text: str):
+            if g_nais.job_save_image(name, text):
+                self.add(name)
+        for item in self._list.selectedItems():
+            x = json_to_text(item.data(Qt.UserRole + 1))
+            g_job.append(JOB_CHANNEL_REGENERATION,
+                         lambda _x=x: _job_impl(datetime.datetime.now().strftime('%Y%m%d%H%M%S'), _x))
+
     def show_in_explorer(self):
         item = self._list.currentItem()
         if not item:
             return
         name = item.data(Qt.UserRole + 0)
         path = os.path.join(g_nais.output_folder(), name) + '.png'
-        import platform
-        plat = platform.system()
-        if plat == 'Windows':
-            subprocess.Popen(f'explorer /select,"{path}"')
-        elif plat == 'Darwin':
-            subprocess.Popen(['open', path])
-        else:
-            subprocess.Popen(['xdg-open', path])
+        show_in_explorer(path)
 
     def startDrag(self, supportedActions:Qt.DropActions) -> None:
         item = self._list.currentItem()
@@ -593,6 +669,7 @@ class GuiMain(QMainWindow):
         self._inipath = os.path.join(g_nais.output_folder(), 'layout.ini')
         self._prompt = GuiPrompt()
         self._image_list = GuiImageList()
+        self._archives = GuiArchiveList()
         self._image_viewer = GuiImageViewer()
         self._image_data = GuiImageData()
         self._image_var = GuiImageVariations()
@@ -604,10 +681,12 @@ class GuiMain(QMainWindow):
         self._image_list.itemChanged.connect(self._image_viewer.setImage)
         self._image_list.itemChanged.connect(self._image_data.setImage)
         self._image_list.itemChanged.connect(self._image_var.setImage)
+        self._image_list.itemArchived.connect(self._archives.refresh)
         self._job.jobStatusChanged.connect(self.on_job_status_changed)
         self.statusBar().addWidget(self._progress, True)
         self.setDockOptions(QMainWindow.AllowNestedDocks | QMainWindow.AllowTabbedDocks)
         self.dock(self._prompt, Qt.LeftDockWidgetArea)
+        self.dock(self._archives, Qt.RightDockWidgetArea)
         self.dock(self._image_viewer, Qt.RightDockWidgetArea)
         self.dock(self._image_var, Qt.RightDockWidgetArea)
         self.dock(self._image_data, Qt.RightDockWidgetArea)
@@ -648,11 +727,11 @@ class GuiMain(QMainWindow):
         menu_file.addAction(action)
         menu_edit = self.menuBar().addMenu('Edit')
         menu_edit.addAction(self._image_list.actionRefresh)
-        menu_edit.addAction(self._image_list.actionSaveSelectedImages)
+        menu_edit.addAction(self._image_list.actionExportSelectedImages)
         menu_edit.addAction(self._image_list.actionDeleteSelectedImages)
         action = QAction(self)
-        action.setText('Edit Archive Preprocess')
-        action.triggered.connect(self.edit_archive_preprocess)
+        action.setText('Edit Export Preprocess')
+        action.triggered.connect(self.edit_export_preprocess)
         menu_edit.addAction(action)
         menu_window = self.menuBar().addMenu('Window')
         menu_window.addAction(self._prompt.parent().toggleViewAction())
@@ -663,14 +742,14 @@ class GuiMain(QMainWindow):
         self._job.start()
         self.load_layout()
 
-    def edit_archive_preprocess(self) -> None:
-        path = os.path.join(g_nais.output_folder(), 'archive_preprocess.txt')
+    def edit_export_preprocess(self) -> None:
+        path = os.path.join(g_nais.output_folder(), 'export_preprocess.txt')
         txt = read_text(path)
         if not txt:
             txt = 'realesrgan-ncnn-vulkan.exe -i {} -o {}'
-        txt, ok = QInputDialog.getText(self, 'Edit Archive Preprocess', 'Command:', QLineEdit.Normal, txt)
+        txt, ok = QInputDialog.getText(self, 'Edit Export Preprocess', 'Command:', QLineEdit.Normal, txt)
         if ok:
-            with open(path, 'wt') as f:
+            with open(path, 'wt', encoding='utf-8') as f:
                 f.write(txt)
 
     def closeEvent(self, event) -> None:

@@ -10,6 +10,9 @@ import threading
 
 def read_text(path: str):
     try:
+        with open(path, 'rt', encoding='utf-8') as f:
+            return f.read()
+    except UnicodeDecodeError as e:
         with open(path, 'rt') as f:
             return f.read()
     except FileNotFoundError as e:
@@ -18,10 +21,23 @@ def read_text(path: str):
 
 
 def json_to_text(obj):
-    return json.dumps(obj, sort_keys=True, indent=2)
+    return json.dumps(obj, sort_keys=True, indent=2, ensure_ascii=False)
 
-def text_to_json(txt):
+
+def text_to_json(txt: str):
     return json.loads(txt.replace('\r', '').replace('\t', '').replace('\n', '').replace('\u3000', ' '))
+
+
+def show_in_explorer(path: str):
+    import platform
+    plat = platform.system()
+    if plat == 'Windows':
+        subprocess.Popen(f'explorer /select,"{path}"')
+    elif plat == 'Darwin':
+        subprocess.Popen(['open', path])
+    else:
+        subprocess.Popen(['xdg-open', path])
+
 
 class NaisJob(QThread):
     jobStatusChanged = Signal(int, int, str)

@@ -154,7 +154,7 @@ class Nais():
             except Exception as e:
                 print(e)
                 return
-        with open(f'{base}.json', 'wt') as f:
+        with open(f'{base}.json', 'wt', encoding='utf-8') as f:
             f.write(json_to_text(args))
         im_bin = self.gen_image(args)
         im = Image.open(io.BytesIO(im_bin))
@@ -168,4 +168,14 @@ class Nais():
         im.save(f'{base}.png', 'PNG', pnginfo=metadata)
         im.thumbnail((64, 64), Image.ANTIALIAS)
         im.save(f'{base}_tm.png', "PNG")
+
+    def job_save_image(self, name: str, text: str):
+        for i in range(5):
+            try:
+                self.save_image(name, text)
+                return True
+            except Exception as e:
+                print(e)
+                time.sleep(1)
+        return False
 
